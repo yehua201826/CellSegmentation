@@ -247,7 +247,7 @@ class LystoDataset(Dataset):
 
             tileIDX, (x, y), label = self.train_data[idx]
             tile = self.images[tileIDX][x:x + self.tile_size, y:y + self.tile_size]
-            tile = self.transform[self.transformIDX[self.tileIDX[idx]]](tile)
+            tile = self.transform[self.transformIDX[self.tileIDX[idx]]](tile)   # tileIDX
             return tile, label
 
         # image validating mode
@@ -437,7 +437,7 @@ class LystoTestset(Dataset):
 
 class Maskset(Dataset):
 
-    def __init__(self, filepath, mask_data, augment=False, num_of_imgs=0):
+    def __init__(self, filepath, mask_data, augment=False, num_of_imgs=0, train=True):
 
         super(Maskset, self).__init__()
         assert type(mask_data) in [np.ndarray, str], "Invalid data type. "
@@ -457,20 +457,28 @@ class Maskset(Dataset):
             org = org.decode('utf-8')
             if num_of_imgs != 0 and i == num_of_imgs:
                 break
+
+            if (train and (i + 1) % 10 == 0) or (not train and (i + 1) % 10 != 0):
+                continue
+
             self.organs.append(org)
             self.images.append(img)
             self.labels.append(label)
 
         if isinstance(mask_data, str):
 
-            for file in sorted(os.listdir(os.path.join(mask_data, 'mask'))):
+            for i, file in enumerate(sorted(os.listdir(os.path.join(mask_data, 'mask_145_o_3')))):
                 if num_of_imgs != 0 and len(self.masks) == len(self.images):
                     break
-                img = io.imread(os.path.join(mask_data, 'mask', file))
+
+                if (train and (i + 1) % 10 == 0) or (not train and (i + 1) % 10 != 0):
+                    continue
+
+                img = io.imread(os.path.join(mask_data, 'mask_145_o_3', file))
                 self.masks.append(img)
 
         else:
-            self.masks = [torch.from_numpy(np.uint8(md)) for md in mask_data]
+            self.masks = [torch.from_numpy(np.uint8(md)) for i, md in enumerate(mask_data) if (train and (i + 1) % 10 != 0) or (not train and (i + 1) % 10 == 0)]
             if num_of_imgs != 0:
                 self.masks = self.masks[:num_of_imgs]
 
