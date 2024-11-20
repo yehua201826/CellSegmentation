@@ -206,6 +206,26 @@ def train_seg(loader, epoch, total_epochs, model, device, optimizer, scheduler):
     image_seg_loss /= len(loader.dataset)
     return image_seg_loss
 
+def val_seg(loader, epoch, total_epochs, model, device):
+    model.eval()
+    loss_val = 0.
+    val_bar = tqdm(loader, desc="segmentation validating")
+    val_bar.set_postfix(epoch="[{}/{}]".format(epoch, total_epochs))
+    with torch.no_grad():
+        for i, (image, mask, label) in enumerate(val_bar):
+            mask = (mask / 255).to(device, dtype=torch.float32)
+            output = model(image.to(device)).to(dtype=torch.float32)
+            ce = CELoss()(output, mask.to(dtype=torch.long))
+            dice = DiceLoss()(F.softmax(output)[:, 1], mask)
+            # loss_v = ce + dice
+            # loss_v = ce
+            loss_v = dice
+            loss_val += loss_v.item() * image.size(0)
+    loss_val /= len(loader.dataset)
+
+    model.train()
+
+    return loss_val
 
 def train_alternative(loader, epoch, total_epochs, model, device, crit_cls, crit_reg, optimizer,
                       scheduler, threshold, alpha, beta, gamma, delta):
