@@ -278,7 +278,7 @@ class MILResNet(nn.Module):
             return out_cls, out_reg
 
         elif self.mode == "segment":
-
+            # lysto
             out_seg = F.interpolate(x4.clone(), size=19, mode="bilinear", align_corners=True)   # out_seg: [n, 2048, 19, 19]
             out_seg = self.upconv1(out_seg)                                                     # [n, 1024, 19, 19]
             out_seg = torch.cat([out_seg, x3], dim=1)                                           # concat: [n, 2048, 19, 19]
@@ -299,6 +299,29 @@ class MILResNet(nn.Module):
             out_seg = self.upconv8(out_seg)                                                     # [n, 64, 150, 150]
             out_seg = F.interpolate(out_seg, size=299, mode="bilinear", align_corners=True)     # [n, 64, 299, 299]
             out_seg = self.seg_out_conv(out_seg)                                                # [n, 1, 299, 299]
+
+            # nuclick
+            # out_seg = F.interpolate(x4.clone(), size=16, mode="bilinear",
+            #                         align_corners=True)  # out_seg: [n, 2048, 19, 19]
+            # out_seg = self.upconv1(out_seg)  # [n, 1024, 19, 19]
+            # out_seg = torch.cat([out_seg, x3], dim=1)  # concat: [n, 2048, 19, 19]
+            # out_seg = self.upconv2(out_seg)  # [n, 1024, 19, 19]
+            #
+            # out_seg = F.interpolate(out_seg, size=32, mode="bilinear", align_corners=True)  # [n, 1024, 38, 38]
+            # out_seg = self.upconv3(out_seg)  # [n, 512, 38, 38]
+            # out_seg = torch.cat([out_seg, x2], dim=1)  # concat: [n, 1024, 38, 38]
+            # out_seg = self.upconv4(out_seg)  # [n, 512, 38, 38]
+            #
+            # out_seg = F.interpolate(out_seg, size=64, mode="bilinear", align_corners=True)  # [n, 512, 75, 75]
+            # out_seg = self.upconv5(out_seg)  # [n, 256, 75, 75]
+            # out_seg = torch.cat([out_seg, x1], dim=1)  # concat: [n, 512, 75, 75]
+            # out_seg = self.upconv6(out_seg)  # [n, 256, 75, 75]
+            #
+            # out_seg = F.interpolate(out_seg, size=128, mode="bilinear", align_corners=True)  # [n, 256, 150, 150]
+            # out_seg = self.upconv7(out_seg)  # [n, 128, 150, 150]
+            # out_seg = self.upconv8(out_seg)  # [n, 64, 150, 150]
+            # out_seg = F.interpolate(out_seg, size=256, mode="bilinear", align_corners=True)  # [n, 64, 299, 299]
+            # out_seg = self.seg_out_conv(out_seg)
 
             return out_seg
 
