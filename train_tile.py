@@ -29,7 +29,7 @@ parser = argparse.ArgumentParser(prog="train_tile.py", description='pt.2: tile c
 parser.add_argument('-m', '--model', type=str, help='path to pretrained model in pt.1')
 parser.add_argument('-e', '--epochs', type=int, default=30,
                     help='total number of epochs to train (default: 30)')
-parser.add_argument('-b', '--tile_batch_size', type=int, default=40960,
+parser.add_argument('-b', '--tile_batch_size', type=int, default=40960,     # 10240
                     help='batch size of tiles (default: 40960)')
 parser.add_argument('-l', '--lr', type=float, default=0.0005, metavar='LR',
                     help='learning rate (default: 0.0005)')
@@ -43,7 +43,7 @@ parser.add_argument('--test_every', default=1, type=int,
                          'set this greater than --epochs')
 parser.add_argument('-t', '--tile_size', type=int, default=32,
                     help='size of a certain tile (default: 32)')
-parser.add_argument('-i', '--interval', type=int, default=20,
+parser.add_argument('-i', '--interval', type=int, default=20,   # 16
                     help='interval between adjacent tiles (default: 20)')
 parser.add_argument('-k', '--tiles_per_pos', default=1, type=int,
                     help='k tiles are from a single positive cell (default: 1)')
@@ -118,9 +118,14 @@ def train(total_epochs, last_epoch, test_every, model, device, crit_cls, optimiz
                 probs = inference_tiles(train_loader, model, device, epoch, total_epochs)
                 sample(trainset, probs, tiles_per_pos, topk_neg, pos_neg_ratio=args.pos_neg_ratio)
 
+                torch.cuda.empty_cache()  #########
+
                 trainset.setmode(3)
                 loss = train_tile(train_loader, epoch, total_epochs, model, device, crit_cls, optimizer,
                                   scheduler, gamma)
+
+                torch.cuda.empty_cache()  #########
+
                 print("tile loss: {:.4f}".format(loss))
                 fconv = open(os.path.join(output_path, '{}-tile-training.csv'.format(now)), 'a')
                 fconv.write('{},{}\n'.format(epoch, loss))
@@ -135,6 +140,9 @@ def train(total_epochs, last_epoch, test_every, model, device, crit_cls, optimiz
 
                     probs_t = inference_tiles(val_loader, model, device, epoch, total_epochs)
                     metrics_t = evaluate_tile(valset, probs_t, tiles_per_pos, threshold)
+
+                    torch.cuda.empty_cache()    #########
+
                     print('tile error: {} | tile FPR: {} | tile FNR: {}\n'.format(*metrics_t))
 
                     fconv = open(os.path.join(output_path, '{}-tile-validation.csv'.format(now)), 'a')
@@ -257,7 +265,7 @@ if __name__ == "__main__":
         model = to_device(model, device)
         last_epoch = 0
         last_epoch_for_scheduler = -1
-    else:
+    else:   # True
         f = torch.load(args.model, map_location=device)
         model = nets[f['encoder']]
         model = to_device(model, device)
@@ -300,7 +308,7 @@ if __name__ == "__main__":
         }
     }
 
-    optimizer = optimizers['SGD'] if args.scheduler is not None else optimizers['Adam']
+    optimizer = optimizers['SGD'] if args.scheduler is not None else optimizers['Adam']     # adam
     scheduler = schedulers[args.scheduler](optimizer,
                                            last_epoch=last_epoch_for_scheduler,
                                            **scheduler_kwargs[args.scheduler]) \

@@ -31,8 +31,8 @@ now = int(time.time())
 parser = argparse.ArgumentParser(prog="train_image.py", description='pt.1: image assessment training.')
 parser.add_argument('-e', '--epochs', type=int, default=50,
                     help='total number of epochs to train (default: 50)')
-parser.add_argument('--reg_only', action="store_true", help='only enable image regression head')
-parser.add_argument('-H', '--hard_threshold', type=int, default=None,
+parser.add_argument('--reg_only', action="store_true", help='only enable image regression head')    # true
+parser.add_argument('-H', '--hard_threshold', type=int, default=None,   # 5
                     help='Dynamically increase ratio of hard data by resampling between training epochs. '
                          'Hard data threshold defined by categorizing error / counting error (--reg_only). '
                          '(no dynamic training as default)')
@@ -42,26 +42,26 @@ parser.add_argument('-O', '--organ', type=str, default=None,
 parser.add_argument('-E', '--encoder', type=str, default='resnet50',
                     help='structure of the shared encoder, {\'resnet18\', \'resnet34\', \'resnet50\' (default), '
                          '\'efficientnet_b0\', \'efficientnet_b2\', \'resnext50\', \'resnext101\'}')
-parser.add_argument('-B', '--image_batch_size', type=int, default=48,
+parser.add_argument('-B', '--image_batch_size', type=int, default=48,   # 32
                     help='batch size of images (default: 48, 32 recommended for EfficientNet)')
 parser.add_argument('-l', '--lr', type=float, default=8e-5, metavar='LR',
                     help='learning rate (8e-5 recommended for EfficientNet)')
 parser.add_argument('--weight_decay', type=float, default=1e-4,
                     help='decay of weight (default: 1e-4)')
-parser.add_argument('-s', '--scheduler', type=str, default=None,
+parser.add_argument('-s', '--scheduler', type=str, default=None,    # OneCycleLR
                     help='learning rate scheduler if necessary, '
                          '{\'OneCycleLR\', \'ExponentialLR\', \'CosineAnnealingWarmRestarts\'} (default: None)')
-parser.add_argument('-a', '--augment', action="store_true", help='apply data augmentation')
+parser.add_argument('-a', '--augment', action="store_true", help='apply data augmentation')     # true
 parser.add_argument('-w', '--workers', default=4, type=int,
                     help='number of dataloader workers (default: 4)')
-parser.add_argument('--test_every', default=1, type=int,
+parser.add_argument('--test_every', default=1, type=int,    # 1或50+
                     help='validate every (default: 1) epoch(s). To use all data for training, '
                          'set this greater than --epochs')
 parser.add_argument('--distributed', action="store_true",
                     help='if distributed parallel training is enabled (seems to be no avail)')
 parser.add_argument('-d', '--device', type=int, default=0,
                     help='CUDA device id if available (default: 0, mutually exclusive with --distributed)')
-parser.add_argument('-o', '--output', type=str, default='checkpoint/{}'.format(now), metavar='OUTPUT/PATH',
+parser.add_argument('-o', '--output', type=str, default='checkpoint/{}'.format(now), metavar='OUTPUT/PATH',     # checkpoint/pt1
                     help='saving directory of output file (default: ./checkpoint/<timestamp>)')
 parser.add_argument('-r', '--resume', type=str, default=None, metavar='MODEL/FILE/PATH',
                     help='continue training from a checkpoint.pth')
@@ -278,7 +278,7 @@ def train(total_epochs, last_epoch, test_every, model, device, crit_cls, crit_re
 
     print('Training ...' if not args.resume else 'Resuming from the checkpoint (epoch {})...'.format(last_epoch))
 
-    validate = lambda epoch, test_every: (epoch + 1) % test_every == 0
+    validate = lambda epoch, test_every: (epoch + 1) % test_every == 0  # True
     start = int(time.time())
     with SummaryWriter(comment=output_path.rsplit('/', maxsplit=1)[-1]) as writer:
         alpha = 1
@@ -516,7 +516,7 @@ if __name__ == "__main__":
         if cp['scheduler'] is not None and scheduler is not None:
             scheduler.load_state_dict(cp['scheduler'])
 
-    if args.reg_only:
+    if args.reg_only:       # True
         train_reg(total_epochs=args.epochs,
                   last_epoch=last_epoch,
                   test_every=args.test_every,

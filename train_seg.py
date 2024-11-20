@@ -10,16 +10,14 @@ import numpy as np
 import torch
 import torch.optim as optim
 import torch.nn as nn
-import torch.distributed as dist
+
 from torch.optim.lr_scheduler import *
 from torch.utils.data import DataLoader
-from torch.utils.data.distributed import DistributedSampler
 from torch.utils.tensorboard import SummaryWriter
 
 from dataset import Maskset
 from model import nets
-from train import train_seg
-from utils import generate_masks
+from train import train_seg, val_seg
 
 warnings.filterwarnings("ignore")
 now = int(time.time())
@@ -34,11 +32,11 @@ parser.add_argument('-p', '--preprocess', action='store_true',
                          '(no use if --skip_draw is chosen)')
 parser.add_argument('-P', '--pseudomask_dir', type=str, default='pseudomask', metavar='DIRECTORY',
                     help='dir name to save pseudo masks (default: pseudomask)')
-parser.add_argument('-b', '--tile_batch_size', type=int, default=40960,
+parser.add_argument('-b', '--tile_batch_size', type=int, default=40960,     # 10240
                     help='batch size of tiles (default: 40960, no use if --skip_draw is chosen)')
-parser.add_argument('-i', '--interval', type=int, default=5,
+parser.add_argument('-i', '--interval', type=int, default=5,    # 16
                     help='sample interval of tiles (default: 5, no use if --skip_draw is chosen)')
-parser.add_argument('-t', '--tile_size', type=int, default=16,
+parser.add_argument('-t', '--tile_size', type=int, default=16,      # 32
                     help='size of each tile (default: 16, no use if --skip_draw is chosen)')
 parser.add_argument('-c', '--threshold', type=float, default=0.95,
                     help='minimal prob for tiles to show in generating segmentation masks '
@@ -53,13 +51,13 @@ parser.add_argument('-s', '--scheduler', type=str, default=None,
                     help='learning rate scheduler if necessary, '
                          '{\'OneCycleLR\', \'ExponentialLR\', \'CosineAnnealingWarmRestarts\'} (default: None)')
 parser.add_argument('-a', '--augment', action="store_true", help='apply data augmentation')
-parser.add_argument('-w', '--workers', default=4, type=int,
+parser.add_argument('-w', '--workers', default=8, type=int,
                     help='number of dataloader workers (default: 4)')
 parser.add_argument('--scratch', action="store_true",
                     help='[ABLATION] encoder is trained if set')
 parser.add_argument('--distributed', action="store_true",
                     help='if distributed parallel training is enabled (seems to be no avail)')
-parser.add_argument('-d', '--device', type=int, default=0,
+parser.add_argument('-d', '--device', type=int, default=1,
                     help='CUDA device id if available (default: 0, mutually exclusive with --distributed)')
 parser.add_argument('-o', '--output', type=str, default='checkpoint/{}'.format(now), metavar='OUTPUT/PATH',
                     help='saving directory of output file (default: ./checkpoint/<timestamp>)')
@@ -83,14 +81,14 @@ def train(total_epochs, last_epoch, model, device, optimizer, scheduler, output_
     """
 
     fconv = open(os.path.join(output_path, '{}-seg-training.csv'.format(now)), 'w')
-    fconv.write('epoch,image_seg_loss\n')
+    fconv.write('epoch,image_seg_loss,val_loss\n')
     fconv.close()
 
     start = int(time.time())
     with SummaryWriter(comment=output_path.rsplit('/', maxsplit=1)[-1]) as writer:
 
         print("PT.III - cell segmentation branch training ...")
-
+        best_val = float('inf')
         for epoch in range(1 + last_epoch, total_epochs + 1):
             try:
                 # This will lead to problem
@@ -102,22 +100,22 @@ def train(total_epochs, last_epoch, model, device, optimizer, scheduler, output_
                 loss = train_seg(train_loader, epoch, total_epochs, model, device, optimizer,
                                  scheduler)
 
-                print("image seg loss: {:.4f}".format(loss))
+                loss_val = val_seg(val_loader, epoch, total_epochs, model, device)
+
+                print("image seg train loss: {:.4f}, val loss: {:.4f}".format(loss, loss_val))
                 fconv = open(os.path.join(output_path, '{}-seg-training.csv'.format(now)), 'a')
-                fconv.write('{},{}\n'.format(epoch, loss))
+                fconv.write('{},{},{}\n'.format(epoch, loss, loss_val))
                 fconv.close()
 
                 add_scalar_loss(writer, epoch, loss)
 
-                # # Validating step
-                # if validate(epoch, test_every):
-                #     print('Validating ...')
+                if loss_val < best_val:
+                    best_val = loss_val
+                    if not os.path.exists(output_path+'/val'):
+                        os.makedirs(output_path+'/val')
+                    save_model(epoch, model, optimizer, scheduler, output_path+'/val')
 
-                # --------------------------
-                # --------------------------
-                # --------------------------
-                if epoch >= args.epochs:
-                    save_model(epoch, model, optimizer, scheduler, output_path)
+                save_model(epoch, model, optimizer, scheduler, output_path)
 
             except KeyboardInterrupt:
                 save_model(epoch, model, optimizer, scheduler, output_path)
@@ -152,9 +150,12 @@ def add_scalar_loss(writer, epoch, loss):
 
 
 if __name__ == "__main__":
+
+    # time.sleep(16800)
+
     print("Training settings: ")
     print("Training Mode: {} | Device: {} | Model: {} | {} epoch(s) in total\n"
-          "No validation | Initial LR: {} | Output directory: {}"
+          "No vidation | Initial LR: {} | Output directory: {}"
           .format('segmentation (pt.3)', 'GPU' if torch.cuda.is_available() else 'CPU',
                   args.resume if args.resume else args.model, args.epochs, args.lr, args.output))
     if args.skip_draw:
@@ -167,30 +168,35 @@ if __name__ == "__main__":
 
     # model setup
     def to_device(model, device):
-        if dist.is_nccl_available() and args.distributed:
-            print('\nNCCL is available. Setup distributed parallel training with {} devices...\n'
-                  .format(torch.cuda.device_count()))
-            dist.init_process_group(backend='nccl', world_size=1)
-            device = torch.device("cuda", args.local_rank)
-            model.to(device)
-            model = nn.parallel.DistributedDataParallel(model, device_ids=[args.local_rank],
-                                                        output_device=args.local_rank)
+        if args.distributed:
+            import torch.distributed as dist
+            if dist.is_nccl_available():
+                print('\nNCCL is available. Setup distributed parallel training with {} devices...\n'
+                      .format(torch.cuda.device_count()))
+                dist.init_process_group(backend='nccl', world_size=1)
+                device = torch.device("cuda", args.local_rank)
+                model.to(device)
+                model = nn.parallel.DistributedDataParallel(model, device_ids=[args.local_rank],
+                                                            output_device=args.local_rank)
+            else:
+                model.to(device)
         else:
             model.to(device)
         return model
 
     os.environ['CUDA_VISIBLE_DEVICES'] = str(args.device)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu', args.device)
+
     if args.resume:
         cp = torch.load(args.resume, map_location=device)
         model = nets[cp['encoder']]
-        model = to_device(model, device)
         # load all params
         model.load_state_dict(
             OrderedDict({k: v for k, v in cp['state_dict'].items()
                          if k.startswith(model.encoder_prefix + model.tile_module_prefix +
                                          model.image_module_prefix + model.seg_module_prefix)}),
             strict=False)
+        model = to_device(model, device)
         last_epoch = cp['epoch']
         last_epoch_for_scheduler = cp['scheduler']['last_epoch'] if cp['scheduler'] is not None else -1
     elif args.scratch:
@@ -199,16 +205,16 @@ if __name__ == "__main__":
         last_epoch = 0
         last_epoch_for_scheduler = -1
         args.skip_draw = True
-    else:
+    else:   # True
         f = torch.load(args.model, map_location=device)
         model = nets[f['encoder']]
-        model = to_device(model, device)
-        # load params of resnet encoder, tile head and image head only
         model.load_state_dict(
             OrderedDict({k: v for k, v in f['state_dict'].items()
                          if k.startswith(model.encoder_prefix + model.tile_module_prefix +
                                          model.image_module_prefix)}),
             strict=False)
+        model = to_device(model, device)
+        # load params of resnet encoder, tile head and image head only
         last_epoch = 0
         last_epoch_for_scheduler = -1
 
@@ -251,6 +257,7 @@ if __name__ == "__main__":
         # if args.preprocess:
         from dataset import LystoTestset
         from inference import inference_image
+        from utils import generate_masks
 
         # clear artifact images
         limit_set = LystoTestset(os.path.join(training_data_path, "training.h5"),
@@ -268,20 +275,28 @@ if __name__ == "__main__":
         tiles = tiles[indices]
         groups = groups[indices]
 
-        pseudo_masks = generate_masks(dataset, tiles, groups, preprocess=args.preprocess,
-                                      output_path=os.path.join(training_data_path, args.pseudomask_dir))
-        trainset = Maskset(os.path.join(training_data_path, "training.h5"), pseudo_masks, augment=args.augment,
-                           num_of_imgs=100 if args.debug else 0)
         generate_masks(dataset, tiles, groups, preprocess=args.preprocess,
                        output_path=os.path.join(training_data_path, args.pseudomask_dir))
 
     trainset = Maskset(os.path.join(training_data_path, "training.h5"),
                        os.path.join(training_data_path, args.pseudomask_dir),
-                       augment=args.augment, num_of_imgs=100 if args.debug else 0)
+                       augment=args.augment, num_of_imgs=100 if args.debug else 0, train=True)
+    valset = Maskset(os.path.join(training_data_path, "training.h5"),
+                       os.path.join(training_data_path, args.pseudomask_dir),
+                       augment=args.augment, num_of_imgs=100 if args.debug else 0, train=False)
 
-    train_sampler = DistributedSampler(trainset) if dist.is_nccl_available() and args.distributed else None
+    if args.distributed:
+        from torch.utils.data.distributed import DistributedSampler
+        train_sampler = DistributedSampler(trainset) if dist.is_nccl_available() and args.distributed else None
+        val_sampler = DistributedSampler(valset) if dist.is_nccl_available() and args.distributed else None
+    else:
+        train_sampler = None
+        val_sampler = None
+
     train_loader = DataLoader(trainset, batch_size=args.image_batch_size, shuffle=True, num_workers=args.workers,
                               sampler=train_sampler, pin_memory=True)
+    val_loader = DataLoader(valset, batch_size=args.image_batch_size, shuffle=False, num_workers=args.workers,
+                              sampler=val_sampler, pin_memory=True)
 
     # optimization settings
     optimizer_params = {'params': model.parameters(),

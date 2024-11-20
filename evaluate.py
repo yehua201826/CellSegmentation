@@ -10,7 +10,7 @@ def evaluate_tile(valset, probs, tiles_per_pos, threshold):
 
     val_groups = np.array(valset.tileIDX)
 
-    order = np.lexsort((probs, val_groups)) # sort tiles by prediction
+    order = np.lexsort((probs, val_groups))  # sort tiles by prediction
     val_groups = val_groups[order]
     val_probs = probs[order]
 
