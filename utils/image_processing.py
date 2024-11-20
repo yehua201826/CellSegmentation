@@ -8,6 +8,9 @@ import numpy as np
 import cv2
 from skimage import io, morphology
 
+import torch
+torch.set_default_tensor_type(torch.DoubleTensor)   # necessary when
+
 warnings.filterwarnings("ignore")
 
 
@@ -87,6 +90,8 @@ def generate_masks(dataset, tiles, groups, preprocess, save_masks=True, output_p
         os.makedirs(os.path.join(output_path, "rgb"))
     if not os.path.exists(os.path.join(output_path, "mask")):
         os.makedirs(os.path.join(output_path, "mask"))
+    if not os.path.exists(os.path.join(output_path, "mask_hsv")):
+        os.makedirs(os.path.join(output_path, "mask_hsv"))
 
     pseudo_masks = np.zeros((len(dataset.images), *dataset.image_size)).astype(np.uint8)
 
@@ -97,13 +102,20 @@ def generate_masks(dataset, tiles, groups, preprocess, save_masks=True, output_p
         pseudo_masks[groups[i]][grid[0]: grid[0] + dataset.tile_size,
                                 grid[1]: grid[1] + dataset.tile_size] = tile_mask
 
+    if preprocess:
+
+        from utils.par import PAR
+        par = PAR(num_iter=10, dilations=[1, 2, 4, 6, 8, 10, 12, 24])
+
     for i, img in enumerate(tqdm(dataset.images, desc="saving mask images")):
+
         if preprocess:
-            pseudo_masks[i] = preprocess_masks(img, pseudo_masks[i])
+            mask_hsv, pseudo_masks[i] = preprocess_masks(img, pseudo_masks[i], par)
 
         if save_masks:
             io.imsave(os.path.join(output_path, "rgb/{:05}.png".format(i + 1)), np.uint8(img))
-            io.imsave(os.path.join(output_path, "mask/{:05}.png".format(i + 1)), np.uint8(pseudo_masks[i] * 255))
+            io.imsave(os.path.join(output_path, "mask_/{:05}.png".format(i + 1)), np.uint8(pseudo_masks[i] * 255))
+            io.imsave(os.path.join(output_path, "mask_hsv/{:05}.png".format(i + 1)), np.uint8(mask_hsv * 255))
 
     if save_masks:
         print("Original images & masks saved in \'{}\'.".format(output_path))
@@ -111,36 +123,38 @@ def generate_masks(dataset, tiles, groups, preprocess, save_masks=True, output_p
     return pseudo_masks
 
 
-def preprocess_masks(img, mask):
-
+def preprocess_masks(img, mask, par):
     # binarize original images by setting a value thresh in HSV
-    img_split = cv2.split(cv2.cvtColor(img, cv2.COLOR_BGR2HSV))
+    img_split = cv2.split(cv2.cvtColor(img, cv2.COLOR_RGB2HSV))
     _, mask_hsv = cv2.threshold(img_split[2], thresh=170, maxval=255, type=cv2.THRESH_BINARY)
     # intersect with mask for more precise borders
     mask = np.logical_and(mask, (1 - mask_hsv / 255).astype(bool))
     # remove small patches with low connectivity
-    mask = remove_small_regions(mask, min_object_size=400, hole_area_threshold=120)
+    # mask = remove_small_regions(mask, min_object_size=400, hole_area_threshold=120)     # 400,120
 
-    return mask
+    # par operation
+    img_1 = np.transpose(img, (2, 0, 1))
+    img_2 = torch.tensor(img_1, dtype=torch.double)
+    img_2 = img_2[None, :, :, :]
+    img_2 = img_2 / 255.
 
+    mask_ = mask[None, :, :]
+    mask_1 = np.concatenate((mask_, mask_, mask_), axis=0)
+    mask_2 = torch.tensor(mask_1, dtype=torch.double)
+    mask_2 = mask_2[None, :, :, :]
 
-# def heatmap(testset, tiles, probs, topk, csv_file, output_path):
-#
-#     for i, img in enumerate(testset.images):
-#         mask = np.zeros((img.shape[0], img.shape[1]))
-#         for idx in range(topk):
-#             tile_mask = np.full((testset.size, testset.size), probs[idx + i * topk])
-#             grid = list(map(int, tiles[idx + i * topk]))
-#             mask[grid[0]: grid[0] + testset.size,
-#                  grid[1]: grid[1] + testset.size] = tile_mask
-#             # output info
-#             print("prob_{}:{}".format(i, probs[idx + i * topk]))
-#             w = csv.writer(csv_file)
-#             w.writerow([i, '{}'.format(grid), probs[idx + i * topk]])
-#
-#         mask = cv2.applyColorMap(255 - np.uint8(255 * mask), cv2.COLORMAP_JET)
-#         img = img * 0.5 + mask * 0.5
-#         io.imsave(os.path.join(output_path, "test_{:05}.png".format(i)), np.uint8(img))
+    new_mask = par.forward(img_2, mask_2)
+    mask_par = new_mask[0][0]
+    mask_par = (mask_par / (torch.max(mask_par) + 1e-5)) * 255
+
+    threshold_par = 145     # 159, 150, 140, 155, 145
+    mask_par_thre = (mask_par > threshold_par).numpy()
+    # remove small patches with low connectivity
+    mask_par_thre_remove = remove_small_regions(mask_par_thre, min_object_size=300, hole_area_threshold=100)   # 400, 120
+    #
+    #   # return mask
+    return mask, mask_par_thre_remove
+    # return (1 - mask_hsv / 255), mask, mask_par_thre, mask_par_thre_remove
 
 
 def heatmap(testset, tiles, probs, groups, csv_file, output_path):
